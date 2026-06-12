@@ -446,8 +446,13 @@ function genWA() {
     const name = WA_SHORT[d.team] || d.team;
     lines.push((f ? f + " " : "") + "*" + name + "*: " + fmtQ(d.bid, "bid") + " / " + fmtQ(d.ask, "ask") + (d.capped ? " ⚠️" : ""));
   }
-  lines.push("");
-  lines.push("_" + (useIPF ? "consistent (IPF) pricing" : "raw market pricing") + (useAlt ? " · ⚠️ = capped by MM view" : "") + "_");
+  const footerBits = [];
+  if (useIPF) footerBits.push("consistent (IPF) pricing");
+  if (useAlt) footerBits.push("⚠️ = capped by MM view");
+  if (footerBits.length) {
+    lines.push("");
+    lines.push("_" + footerBits.join(" · ") + "_");
+  }
   document.getElementById("watext").value = lines.join("\n");
 }
 
