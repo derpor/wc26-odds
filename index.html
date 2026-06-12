@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Cup 2026 — Live Odds Tracker</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #2ea043; --gold: #d4a72c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; }
+  header { max-width: 1100px; margin: 0 auto 20px; }
+  h1 { font-size: 1.5rem; }
+  .sub { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
+  .tabs { max-width: 1100px; margin: 0 auto 14px; display: flex; gap: 8px; }
+  .tab { background: var(--card); border: 1px solid var(--border); color: var(--muted); padding: 8px 18px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.9rem; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); border-bottom-width: 2px; }
+  .controls { max-width: 1100px; margin: 0 auto 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input[type=search] { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; width: 220px; }
+  button { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .wrap { max-width: 1100px; margin: 0 auto; overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { padding: 9px 12px; text-align: right; white-space: nowrap; }
+  th { background: #1c2128; color: var(--muted); cursor: pointer; user-select: none; position: sticky; top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  th .arrow { font-size: 0.7em; }
+  tr { border-top: 1px solid var(--border); }
+  tbody tr:hover { background: #1c2128; }
+  td.odds, td.pct { font-variant-numeric: tabular-nums; }
+  .fav { color: var(--gold); font-weight: 600; }
+  .flag { margin-right: 6px; }
+  .dim { color: var(--muted); }
+  .bid { color: #3fb950; }
+  .ask { color: #f0883e; }
+  .alt { color: #58a6ff; font-weight: 600; }
+  input.pos-in { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; width: 80px; text-align: right; }
+  select.cap-sel { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; }
+  .status { max-width: 1100px; margin: 10px auto; color: var(--muted); font-size: 0.8rem; }
+  .err { color: #f85149; }
+  footer { max-width: 1100px; margin: 16px auto; color: var(--muted); font-size: 0.75rem; line-height: 1.5; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#9917; World Cup 2026 — Live Odds Tracker</h1>
+  <div class="sub" id="subtitle">Decimal odds per team for each knockout stage, derived from live Polymarket prediction-market prices. Click a column header to sort.</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-view="odds">Stage odds</div>
+  <div class="tab" data-view="outcomes">Outcome probabilities</div>
+  <div class="tab" data-view="payouts">Expected payouts</div>
+  <div class="tab" data-view="mm">Market making</div>
+  <div class="tab" data-view="wa">WhatsApp quotes</div>
+</div>
+
+<div class="controls">
+  <input type="search" id="filter" placeholder="Filter teams...">
+  <button id="refresh">&#8635; Refresh</button>
+  <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:var(--muted);cursor:pointer">
+    <input type="checkbox" id="ipf"> Consistent probabilities (IPF)
+  </label>
+  <button id="exportData" title="Copy positions, caps & settings as JSON">&#11015; Export data</button>
+  <button id="importData" title="Paste previously exported JSON">&#11014; Import data</button>
+  <span class="status" id="status">Loading...</span>
+</div>
+
+<div class="wrap" id="tblwrap">
+  <table id="tbl">
+    <thead><tr id="headrow"></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div class="wrap" id="wapanel" style="display:none; padding:16px;">
+  <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+      <input type="checkbox" id="ipf2"> Consistent probabilities (IPF)
+    </label>
+    <span style="font-size:0.9rem;color:var(--muted)">Quotes:</span>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+      <input type="radio" name="qset" value="orig" checked> Original
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+      <input type="radio" name="qset" value="alt"> Alternative (my caps applied)
+    </label>
+    <button id="copywa">&#128203; Copy</button>
+    <span id="copied" style="color:var(--accent);font-size:0.85rem;display:none">Copied!</span>
+  </div>
+  <textarea id="watext" readonly spellcheck="false"
+    style="width:100%; height:480px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:12px; font-family:inherit; font-size:0.9rem; line-height:1.5; resize:vertical;"></textarea>
+</div>
+
+<footer>
+  Data source: <a href="https://polymarket.com/sports/world-cup" target="_blank">Polymarket</a> via its public Gamma API (free, real-time market prices).
+  <b>Stage odds</b>: decimal odds = 1 / market price; hover a cell for the implied price.
+  <b>Outcome probabilities</b>: mutually exclusive final placements per team, summing to 100%. Computed as differences of stage probabilities
+  (e.g. out in QF = P(reach SF is false | reached QF path) = P(QF) − P(SF)). 3rd vs 4th place are assumed equally likely (no separate market).
+  "Out before R16" includes both group-stage exits and Round-of-32 exits — Polymarket has no separate "reach Round of 32" market in the 48-team format.
+  Stage prices are clamped to be non-increasing across rounds, and rows are renormalized so categories sum to exactly 100%.
+  <b>Expected payouts</b>: probability-weighted payout per team using the scheme 200 / 100 / 50 / 25 / 10 / 5 / 0 (champion → out before R16).
+  <b>Market making</b>: bid = 0.9 × EV, ask = 1.1 × EV. A "Won't get past" cap conditions the outcome distribution on the team not advancing beyond that stage
+  (e.g. cap = Quarterfinal ⇒ P(4th/3rd/2nd/1st) = 0, remaining buckets rescaled to 100%); alternative EV and quotes are computed from the conditioned distribution.
+  Net positions and caps persist in this browser only (localStorage) and survive refreshes.
+  <b>Consistent probabilities (IPF)</b>: when enabled, iterative proportional fitting rescales the outcome matrix so every team's row sums to 100% AND
+  each column matches tournament structure (exactly 1 champion, 1 runner-up, 1 third, 1 fourth, 4 QF losers, 8 R16 losers, 32 out before R16).
+  Raw market prices violate these (e.g. 2nd-place probabilities can sum to ~140% across teams due to bookmaker-style margin in each market).
+  EV, bids and asks follow whichever mode is selected. Not betting advice.
+</footer>
+
+<script>
+const STAGES = [
+  { key: "r16",   slug: "world-cup-nation-to-reach-round-of-16" },
+  { key: "qf",    slug: "world-cup-nation-to-reach-quarterfinals" },
+  { key: "sf",    slug: "world-cup-nation-to-reach-semifinals" },
+  { key: "final", slug: "world-cup-nation-to-reach-final" },
+  { key: "win",   slug: "world-cup-winner" },
+];
+const API = "https://gamma-api.polymarket.com/events?slug=";
+
+const ODDS_COLS = [
+  { k: "team",  label: "Team" },
+  { k: "r16",   label: "Reach R16" },
+  { k: "qf",    label: "Reach QF" },
+  { k: "sf",    label: "Reach SF" },
+  { k: "final", label: "Reach Final" },
+  { k: "win",   label: "Win" },
+];
+const OUT_COLS = [
+  { k: "team",     label: "Team" },
+  { k: "outEarly", label: "Out before R16" },
+  { k: "outR16",   label: "Out in R16" },
+  { k: "outQF",    label: "Out in QF" },
+  { k: "p4",       label: "4th place" },
+  { k: "p3",       label: "3rd place" },
+  { k: "p2",       label: "2nd place" },
+  { k: "p1",       label: "Champion" },
+];
+
+const PAYOUTS = { p1: 200, p2: 100, p3: 50, p4: 25, outQF: 10, outR16: 5, outEarly: 0 };
+const PAY_COLS = [
+  { k: "team",     label: "Team" },
+  { k: "outEarly", label: "Out before R16 ×0" },
+  { k: "outR16",   label: "Out in R16 ×5" },
+  { k: "outQF",    label: "Out in QF ×10" },
+  { k: "p4",       label: "4th ×25" },
+  { k: "p3",       label: "3rd ×50" },
+  { k: "p2",       label: "2nd ×100" },
+  { k: "p1",       label: "1st ×200" },
+  { k: "ev",       label: "Expected payout" },
+];
+
+const MM_COLS = [
+  { k: "team",   label: "Team" },
+  { k: "pos",    label: "Net position" },
+  { k: "ev",     label: "Fair price (EV)" },
+  { k: "bid",    label: "Bid (−10%)" },
+  { k: "ask",    label: "Ask (+10%)" },
+  { k: "cap",    label: "Won't get past" },
+  { k: "altEv",  label: "Alt EV" },
+  { k: "altBid", label: "Alt bid" },
+  { k: "altAsk", label: "Alt ask" },
+];
+// cap value = furthest the team can get; outcome buckets kept when conditioning
+const CAP_OPTIONS = [
+  { v: "",         label: "—",                keep: [] },
+  { v: "outEarly", label: "Group / R32",      keep: ["outEarly"] },
+  { v: "outR16",   label: "Round of 16",      keep: ["outEarly","outR16"] },
+  { v: "outQF",    label: "Quarterfinal",     keep: ["outEarly","outR16","outQF"] },
+  { v: "sf",       label: "Semifinal (3rd/4th ok)", keep: ["outEarly","outR16","outQF","p4","p3"] },
+  { v: "final",    label: "Final (2nd ok)",   keep: ["outEarly","outR16","outQF","p4","p3","p2"] },
+];
+const MM_SPREAD = 0.10;
+let mmState = { positions: {}, caps: {} };
+try { mmState = Object.assign(mmState, JSON.parse(localStorage.getItem("wc26mm") || "{}")); } catch (e) {}
+function saveMM() { try { localStorage.setItem("wc26mm", JSON.stringify(mmState)); } catch (e) {} }
+
+function altOutcomes(outRow, capV) {
+  const opt = CAP_OPTIONS.find(c => c.v === capV);
+  if (!opt || !opt.v) return null;
+  const o = {};
+  let s = 0;
+  for (const k of ["outEarly","outR16","outQF","p4","p3","p2","p1"]) {
+    o[k] = opt.keep.includes(k) ? outRow[k] : 0;
+    s += o[k];
+  }
+  if (s <= 0) { o.outEarly = 1; s = 1; } // degenerate: all mass was beyond cap
+  let ev = 0;
+  for (const k in PAYOUTS) ev += (o[k] / s) * PAYOUTS[k];
+  return ev;
+}
+
+const FLAGS = {
+  "Spain":"ES","France":"FR","England":"GB","Brazil":"BR","Argentina":"AR","Portugal":"PT",
+  "Germany":"DE","Netherlands":"NL","Belgium":"BE","Italy":"IT","Croatia":"HR","Norway":"NO",
+  "Mexico":"MX","USA":"US","United States":"US","Canada":"CA","Japan":"JP","South Korea":"KR",
+  "Morocco":"MA","Senegal":"SN","Ghana":"GH","Ivory Coast":"CI","Algeria":"DZ","Tunisia":"TN",
+  "Egypt":"EG","Cape Verde":"CV","South Africa":"ZA","Uruguay":"UY","Colombia":"CO","Ecuador":"EC",
+  "Paraguay":"PY","Panama":"PA","Australia":"AU","New Zealand":"NZ","Iran":"IR","Saudi Arabia":"SA",
+  "Qatar":"QA","Jordan":"JO","Uzbekistan":"UZ","Iraq":"IQ","Austria":"AT","Switzerland":"CH",
+  "Scotland":"GB","Turkey":"TR","Türkiye":"TR","Sweden":"SE","Poland":"PL","Denmark":"DK",
+  "Ukraine":"UA","Bosnia and Herzegovina":"BA","Bosnia":"BA","Curaçao":"CW","Curacao":"CW",
+  "Haiti":"HT","Honduras":"HN","Costa Rica":"CR","Jamaica":"JM","Nigeria":"NG","Cameroon":"CM",
+  "DR Congo":"CD","Wales":"GB","Ireland":"IE","Czechia":"CZ","Czech Republic":"CZ","Slovakia":"SK",
+  "Slovenia":"SI","Serbia":"RS","Albania":"AL","North Macedonia":"MK","Romania":"RO","Hungary":"HU",
+  "Greece":"GR","Russia":"RU","Chile":"CL","Peru":"PE","Venezuela":"VE","Bolivia":"BO",
+};
+function flag(team) {
+  const iso = FLAGS[team];
+  if (!iso) return "";
+  return String.fromCodePoint(...[...iso].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+}
+
+// --- team name normalization (markets spell teams inconsistently, e.g. "Curacao" vs "Curaçao") ---
+const ALIASES = {
+  "usa": "USA", "united states": "USA",
+  "turkey": "Türkiye", "turkiye": "Türkiye",
+  "ivory coast": "Ivory Coast", "cote d'ivoire": "Ivory Coast",
+  "south korea": "South Korea", "korea republic": "South Korea",
+  "czech republic": "Czechia", "czechia": "Czechia",
+  "bosnia": "Bosnia and Herzegovina", "bosnia and herzegovina": "Bosnia and Herzegovina",
+  "bosnia-herzegovina": "Bosnia and Herzegovina",
+  "dr congo": "DR Congo", "congo dr": "DR Congo",
+  "curacao": "Curaçao",
+};
+const NAMES = {}; // key -> display name
+function teamKey(name) {
+  const stripped = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  // canonical key: alias target (lowercased+stripped) so all spellings share ONE key
+  const key = ALIASES[stripped]
+    ? ALIASES[stripped].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    : stripped;
+  if (ALIASES[stripped]) NAMES[key] = ALIASES[stripped];
+  else if (!NAMES[key]) NAMES[key] = name.trim();
+  return key;
+}
+
+// Safety net: runs on every load. Merges any rows that still collide on a
+// normalized name (catches future spelling drift in the source markets).
+function dedupeRows(rws) {
+  const seen = {};
+  const merged = [];
+  let collisions = 0;
+  for (const r of rws) {
+    const k = r.team.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase()
+      .replace(/[^a-z]/g, ""); // ignore spaces/hyphens/punctuation too
+    if (seen[k]) {
+      collisions++;
+      const tgt = seen[k];
+      STAGES.forEach(s => { if (tgt[s.key] == null && r[s.key] != null) tgt[s.key] = r[s.key]; });
+    } else {
+      seen[k] = r;
+      merged.push(r);
+    }
+  }
+  return { rows: merged, collisions };
+}
+
+let rows = [];           // odds view rows
+let rawOutRows = [];     // outcome rows, per-row normalized only
+let outRows = [];        // outcome rows in effect (raw or IPF)
+let payRows = [];        // payout view rows
+let useIPF = localStorage.getItem("wc26ipf") !== "0"; // default on
+
+// Iterative proportional fitting: rows sum to 100%, columns to structural totals
+// (1 champion, 1 runner-up, 1 third, 1 fourth, 4 QF losers, 8 R16 losers, rest out earlier)
+function ipfFit(rws) {
+  const keys = ["outEarly","outR16","outQF","p4","p3","p2","p1"];
+  const N = rws.length;
+  const colT = { outEarly: N - 16, outR16: 8, outQF: 4, p4: 1, p3: 1, p2: 1, p1: 1 };
+  let M = rws.map(r => keys.map(k => r[k]));
+  for (let it = 0; it < 500; it++) {
+    M = M.map(row => { const s = row.reduce((a,b)=>a+b,0); return s > 0 ? row.map(v=>v/s) : row; });
+    let maxdev = 0;
+    keys.forEach((k, j) => {
+      const s = M.reduce((a,row)=>a+row[j],0);
+      if (s > 0) { const f = colT[k]/s; maxdev = Math.max(maxdev, Math.abs(f-1)); M.forEach(row => row[j] *= f); }
+    });
+    if (maxdev < 1e-10) break;
+  }
+  M = M.map(row => { const s = row.reduce((a,b)=>a+b,0); return s > 0 ? row.map(v=>v/s) : row; });
+  return rws.map((r, i) => { const o = { team: r.team }; keys.forEach((k,j) => o[k] = M[i][j]); return o; });
+}
+
+function recompute() {
+  outRows = useIPF ? ipfFit(rawOutRows) : rawOutRows;
+  payRows = outRows.map(r => {
+    const row = { team: r.team };
+    let ev = 0;
+    for (const k in PAYOUTS) { row[k] = r[k] * PAYOUTS[k]; ev += row[k]; }
+    row.ev = ev;
+    return row;
+  });
+}
+let view = "odds";
+let sortKey = "win", sortAsc = true;        // odds view: favorites first
+let outSortKey = "p1", outSortAsc = false;  // outcomes view: champion prob desc
+let paySortKey = "ev", paySortAsc = false;  // payout view: EV desc
+let mmSortKey = "ev", mmSortAsc = false;    // market-making view: EV desc
+
+async function fetchStage(stage) {
+  const res = await fetch(API + stage.slug);
+  if (!res.ok) throw new Error(stage.slug + ": HTTP " + res.status);
+  const events = await res.json();
+  if (!events.length) throw new Error(stage.slug + ": event not found");
+  const out = {};
+  for (const m of events[0].markets || []) {
+    const team = m.groupItemTitle;
+    if (!team) continue;
+    let p = null;
+    try { p = parseFloat(JSON.parse(m.outcomePrices)[0]); } catch (e) {}
+    if (p == null || isNaN(p)) p = m.lastTradePrice;
+    if (p == null || isNaN(p) || p <= 0) continue;
+    out[teamKey(team)] = p;
+  }
+  return out;
+}
+
+function computeOutcomes(row) {
+  // raw stage probabilities (missing -> 0)
+  let pR16 = row.r16 ? row.r16.p : 0;
+  let pQF  = row.qf  ? row.qf.p  : 0;
+  let pSF  = row.sf  ? row.sf.p  : 0;
+  let pF   = row.final ? row.final.p : 0;
+  let pW   = row.win ? row.win.p : 0;
+  // markets are independent books; enforce logical monotonicity
+  pR16 = Math.min(1, pR16);
+  pQF  = Math.min(pQF, pR16);
+  pSF  = Math.min(pSF, pQF);
+  pF   = Math.min(pF, pSF);
+  pW   = Math.min(pW, pF);
+  let o = {
+    outEarly: 1 - pR16,
+    outR16:   pR16 - pQF,
+    outQF:    pQF - pSF,
+    p4: (pSF - pF) / 2,
+    p3: (pSF - pF) / 2,
+    p2: pF - pW,
+    p1: pW,
+  };
+  // renormalize to exactly 100%
+  const s = Object.values(o).reduce((a, b) => a + b, 0);
+  if (s > 0) for (const k in o) o[k] = o[k] / s;
+  return { team: row.team, ...o };
+}
+
+async function load() {
+  const status = document.getElementById("status");
+  status.textContent = "Loading live prices...";
+  status.classList.remove("err");
+  try {
+    const results = await Promise.all(STAGES.map(fetchStage));
+    const teams = new Set();
+    results.forEach(r => Object.keys(r).forEach(t => teams.add(t)));
+    rows = [...teams].map(key => {
+      const row = { team: NAMES[key] || key };
+      STAGES.forEach((s, i) => {
+        const p = results[i][key];
+        row[s.key] = p != null ? { p, odds: 1 / p } : null;
+      });
+      return row;
+    });
+    const dd = dedupeRows(rows);
+    rows = dd.rows;
+    rawOutRows = rows.map(computeOutcomes);
+    recompute();
+    render();
+    status.textContent = "Live • updated " + new Date().toLocaleTimeString() + " • " + rows.length + " teams" +
+      (dd.collisions ? " • ⚠ merged " + dd.collisions + " duplicate name(s) from source" : "");
+  } catch (e) {
+    status.textContent = "Failed to load: " + e.message;
+    status.classList.add("err");
+  }
+}
+
+function fmtOdds(o) {
+  if (o >= 100) return Math.round(o).toLocaleString();
+  return o.toFixed(2);
+}
+function fmtPct(p) {
+  const v = p * 100;
+  if (v > 0 && v < 0.1) return "<0.1%";
+  return v.toFixed(1) + "%";
+}
+
+function renderHead() {
+  const cols = view === "odds" ? ODDS_COLS : view === "outcomes" ? OUT_COLS : view === "payouts" ? PAY_COLS : MM_COLS;
+  const sk = view === "odds" ? sortKey : view === "outcomes" ? outSortKey : view === "payouts" ? paySortKey : mmSortKey;
+  const sa = view === "odds" ? sortAsc : view === "outcomes" ? outSortAsc : view === "payouts" ? paySortAsc : mmSortAsc;
+  document.getElementById("headrow").innerHTML = cols.map(c =>
+    `<th data-k="${c.k}">${c.label} <span class="arrow">${c.k === sk ? (sa ? "▲" : "▼") : ""}</span></th>`
+  ).join("");
+  document.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+    const k = th.dataset.k;
+    if (view === "odds") {
+      if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = k === "team"; }
+    } else if (view === "outcomes") {
+      if (outSortKey === k) outSortAsc = !outSortAsc; else { outSortKey = k; outSortAsc = k === "team"; }
+    } else if (view === "payouts") {
+      if (paySortKey === k) paySortAsc = !paySortAsc; else { paySortKey = k; paySortAsc = k === "team"; }
+    } else {
+      if (!["team","ev","pos","altEv"].includes(k)) return;
+      if (mmSortKey === k) mmSortAsc = !mmSortAsc; else { mmSortKey = k; mmSortAsc = k === "team"; }
+    }
+    render();
+  }));
+}
+
+function genWA() {
+  const q = document.getElementById("filter").value.trim().toLowerCase();
+  const useAlt = document.querySelector('input[name="qset"]:checked').value === "alt";
+  const byTeam = Object.fromEntries(outRows.map(r => [r.team, r]));
+  const data = payRows
+    .filter(r => !q || r.team.toLowerCase().includes(q))
+    .map(r => {
+      const cap = mmState.caps[r.team] || "";
+      let ev = r.ev, capped = false;
+      if (useAlt && cap) {
+        const a = altOutcomes(byTeam[r.team], cap);
+        if (a != null) { ev = a; capped = true; }
+      }
+      return { team: r.team, bid: ev * (1 - MM_SPREAD), ask: ev * (1 + MM_SPREAD), capped };
+    })
+    .sort((a, b) => b.bid - a.bid);
+  const now = new Date();
+  const lines = [
+    "*⚽ WC2026 Trading Game — Quotes*",
+    "_" + now.toLocaleDateString(undefined, { day: "numeric", month: "short" }) + ", " +
+      now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "_",
+    "",
+    "*Country: bid / ask*",
+    "_good for up to 5 contracts_",
+    "",
+  ];
+  const WA_SHORT = { "Bosnia and Herzegovina": "Bosnia" };
+  const fmtQ = (v, side) => {
+    if (v.toFixed(2) === "0.00") return side === "bid" ? "0" : "0.1"; // floor for near-zero quotes
+    return v.toFixed(1) === "0.0" ? v.toFixed(2) : v.toFixed(1);
+  };
+  for (const d of data) {
+    const f = flag(d.team);
+    const name = WA_SHORT[d.team] || d.team;
+    lines.push((f ? f + " " : "") + "*" + name + "*: " + fmtQ(d.bid, "bid") + " / " + fmtQ(d.ask, "ask") + (d.capped ? " ⚠️" : ""));
+  }
+  lines.push("");
+  lines.push("_" + (useIPF ? "consistent (IPF) pricing" : "raw market pricing") + (useAlt ? " · ⚠️ = capped by MM view" : "") + "_");
+  document.getElementById("watext").value = lines.join("\n");
+}
+
+function render() {
+  const isWA = view === "wa";
+  document.getElementById("tblwrap").style.display = isWA ? "none" : "";
+  document.getElementById("wapanel").style.display = isWA ? "" : "none";
+  if (isWA) { document.getElementById("ipf2").checked = useIPF; genWA(); return; }
+  renderHead();
+  const q = document.getElementById("filter").value.trim().toLowerCase();
+  const tbody = document.querySelector("#tbl tbody");
+
+  if (view === "odds") {
+    const sorted = [...rows]
+      .filter(r => !q || r.team.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (sortKey === "team") return sortAsc ? a.team.localeCompare(b.team) : b.team.localeCompare(a.team);
+        const av = a[sortKey] ? a[sortKey].odds : Infinity;
+        const bv = b[sortKey] ? b[sortKey].odds : Infinity;
+        return sortAsc ? av - bv : bv - av;
+      });
+    const minWin = Math.min(...rows.map(r => r.win ? r.win.odds : Infinity));
+    tbody.innerHTML = sorted.map(r => {
+      const cells = STAGES.map(s => {
+        const c = r[s.key];
+        if (!c) return '<td class="odds">—</td>';
+        const cls = (s.key === "win" && c.odds === minWin) ? "odds fav" : "odds";
+        return `<td class="${cls}" title="market price ${(c.p * 100).toFixed(1)}%">${fmtOdds(c.odds)}</td>`;
+      }).join("");
+      return `<tr><td><span class="flag">${flag(r.team)}</span>${r.team}</td>${cells}</tr>`;
+    }).join("");
+  } else if (view === "mm") {
+    const byTeam = Object.fromEntries(outRows.map(r => [r.team, r]));
+    const data = payRows.map(r => {
+      const cap = mmState.caps[r.team] || "";
+      const altEv = cap ? altOutcomes(byTeam[r.team], cap) : null;
+      return {
+        team: r.team, ev: r.ev,
+        pos: mmState.positions[r.team] ?? "",
+        bid: r.ev * (1 - MM_SPREAD), ask: r.ev * (1 + MM_SPREAD),
+        cap, altEv,
+        altBid: altEv != null ? altEv * (1 - MM_SPREAD) : null,
+        altAsk: altEv != null ? altEv * (1 + MM_SPREAD) : null,
+      };
+    });
+    const sorted = data
+      .filter(r => !q || r.team.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (mmSortKey === "team") return mmSortAsc ? a.team.localeCompare(b.team) : b.team.localeCompare(a.team);
+        const av = mmSortKey === "pos" ? (parseFloat(a.pos) || 0) : (a[mmSortKey] ?? -Infinity);
+        const bv = mmSortKey === "pos" ? (parseFloat(b.pos) || 0) : (b[mmSortKey] ?? -Infinity);
+        return mmSortAsc ? av - bv : bv - av;
+      });
+    const f1 = v => v == null ? "—" : v.toFixed(1);
+    tbody.innerHTML = sorted.map(r => {
+      const capSel = `<select class="cap-sel" data-team="${r.team}">` +
+        CAP_OPTIONS.map(o => `<option value="${o.v}"${o.v === r.cap ? " selected" : ""}>${o.label}</option>`).join("") +
+        `</select>`;
+      return `<tr>
+        <td><span class="flag">${flag(r.team)}</span>${r.team}</td>
+        <td class="pct"><input class="pos-in" data-team="${r.team}" type="number" step="any" value="${r.pos}" placeholder="0"></td>
+        <td class="pct"><b>${f1(r.ev)}</b></td>
+        <td class="pct bid">${f1(r.bid)}</td>
+        <td class="pct ask">${f1(r.ask)}</td>
+        <td>${capSel}</td>
+        <td class="pct${r.altEv != null ? " alt" : " dim"}">${f1(r.altEv)}</td>
+        <td class="pct${r.altEv != null ? " bid" : " dim"}">${f1(r.altBid)}</td>
+        <td class="pct${r.altEv != null ? " ask" : " dim"}">${f1(r.altAsk)}</td>
+      </tr>`;
+    }).join("");
+    tbody.querySelectorAll(".pos-in").forEach(el => el.addEventListener("change", () => {
+      mmState.positions[el.dataset.team] = el.value;
+      saveMM();
+    }));
+    tbody.querySelectorAll(".cap-sel").forEach(el => el.addEventListener("change", () => {
+      mmState.caps[el.dataset.team] = el.value;
+      saveMM();
+      render();
+    }));
+  } else if (view === "payouts") {
+    const sorted = [...payRows]
+      .filter(r => !q || r.team.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (paySortKey === "team") return paySortAsc ? a.team.localeCompare(b.team) : b.team.localeCompare(a.team);
+        return paySortAsc ? a[paySortKey] - b[paySortKey] : b[paySortKey] - a[paySortKey];
+      });
+    const maxEv = Math.max(...payRows.map(r => r.ev));
+    tbody.innerHTML = sorted.map(r => {
+      const cells = PAY_COLS.slice(1).map(c => {
+        const v = r[c.k];
+        let cls = "pct";
+        if (c.k === "ev") cls += r.ev === maxEv ? " fav" : "";
+        else if (v < 0.05) cls += " dim";
+        return `<td class="${cls}">${c.k === "ev" ? "<b>" + v.toFixed(1) + "</b>" : v.toFixed(1)}</td>`;
+      }).join("");
+      return `<tr><td><span class="flag">${flag(r.team)}</span>${r.team}</td>${cells}</tr>`;
+    }).join("");
+  } else {
+    const sorted = [...outRows]
+      .filter(r => !q || r.team.toLowerCase().includes(q))
+      .sort((a, b) => {
+        if (outSortKey === "team") return outSortAsc ? a.team.localeCompare(b.team) : b.team.localeCompare(a.team);
+        return outSortAsc ? a[outSortKey] - b[outSortKey] : b[outSortKey] - a[outSortKey];
+      });
+    const maxP1 = Math.max(...outRows.map(r => r.p1));
+    tbody.innerHTML = sorted.map(r => {
+      const cells = OUT_COLS.slice(1).map(c => {
+        const p = r[c.k];
+        let cls = "pct";
+        if (c.k === "p1" && p === maxP1) cls += " fav";
+        else if (p < 0.0005) cls += " dim";
+        return `<td class="${cls}">${fmtPct(p)}</td>`;
+      }).join("");
+      return `<tr><td><span class="flag">${flag(r.team)}</span>${r.team}</td>${cells}</tr>`;
+    }).join("");
+  }
+}
+
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  view = t.dataset.view;
+  document.getElementById("subtitle").textContent = view === "odds"
+    ? "Decimal odds per team for each knockout stage, derived from live Polymarket prediction-market prices. Click a column header to sort."
+    : view === "outcomes"
+    ? "Where each team's tournament ends — mutually exclusive outcomes summing to 100% per team, derived from the same live stage prices."
+    : view === "payouts"
+    ? "Expected payout per team: each outcome's probability × its payout (1st=200, 2nd=100, 3rd=50, 4th=25, out in QF=10, out in R16=5, out before R16=0). Columns show each outcome's contribution."
+    : view === "mm"
+    ? "Market-maker sheet. Fair price = expected payout; bid/ask = ±10%. Set 'Won't get past' to cap a team's run — outcome probabilities beyond the cap are zeroed and the rest renormalized, giving alternative EV and quotes. Net position and caps are saved locally in your browser."
+    : "WhatsApp-ready quote sheet. Pick pricing mode and quote set, then copy-paste into your group chat — *bold* and _italics_ render natively in WhatsApp. The team filter above applies.";
+  render();
+}));
+document.getElementById("filter").addEventListener("input", render);
+document.getElementById("refresh").addEventListener("click", load);
+function setIPF(v) {
+  useIPF = v;
+  try { localStorage.setItem("wc26ipf", useIPF ? "1" : "0"); } catch (e) {}
+  document.getElementById("ipf").checked = v;
+  document.getElementById("ipf2").checked = v;
+  recompute();
+  render();
+}
+document.getElementById("ipf").addEventListener("change", e => setIPF(e.target.checked));
+document.getElementById("ipf2").addEventListener("change", e => setIPF(e.target.checked));
+document.getElementById("ipf").checked = useIPF;
+document.getElementById("ipf2").checked = useIPF;
+document.querySelectorAll('input[name="qset"]').forEach(r => r.addEventListener("change", genWA));
+document.getElementById("copywa").addEventListener("click", () => {
+  const ta = document.getElementById("watext");
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const c = document.getElementById("copied");
+    c.style.display = "";
+    setTimeout(() => c.style.display = "none", 1500);
+  }).catch(() => { ta.select(); document.execCommand("copy"); });
+});
+document.getElementById("exportData").addEventListener("click", () => {
+  const payload = JSON.stringify({ v: 1, exported: new Date().toISOString(), positions: mmState.positions, caps: mmState.caps, ipf: useIPF }, null, 2);
+  const done = () => {
+    const st = document.getElementById("status");
+    st.textContent = "Data copied to clipboard — save it anywhere (file, notes, repo). Use Import on another machine.";
+  };
+  navigator.clipboard.writeText(payload).then(done).catch(() => { window.prompt("Copy this JSON:", payload); });
+});
+document.getElementById("importData").addEventListener("click", () => {
+  const raw = window.prompt("Paste previously exported JSON:");
+  if (!raw) return;
+  try {
+    const d = JSON.parse(raw);
+    if (d.positions) mmState.positions = d.positions;
+    if (d.caps) mmState.caps = d.caps;
+    saveMM();
+    if (typeof d.ipf === "boolean") setIPF(d.ipf); else { recompute(); render(); }
+    document.getElementById("status").textContent = "Data imported ✓";
+  } catch (e) {
+    document.getElementById("status").textContent = "Import failed: invalid JSON";
+  }
+});
+load();
+</script>
+</body>
+</html>
