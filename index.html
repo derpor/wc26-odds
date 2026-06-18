@@ -56,11 +56,19 @@
   <div class="tab" data-view="payouts">Expected payouts</div>
   <div class="tab" data-view="mm">Market making</div>
   <div class="tab" data-view="wa">WhatsApp quotes</div>
+  <div class="tab" data-view="custom">Custom source</div>
 </div>
 
 <div class="controls">
   <input type="search" id="filter" placeholder="Filter teams...">
   <button id="refresh">&#8635; Refresh</button>
+  <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:var(--muted);cursor:pointer">
+    Source:
+    <select id="srcSel" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;">
+      <option value="polymarket">Polymarket (live)</option>
+      <option value="custom">Custom (pasted)</option>
+    </select>
+  </label>
   <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:var(--muted);cursor:pointer">
     <input type="checkbox" id="ipf"> Consistent probabilities (IPF)
   </label>
@@ -93,6 +101,21 @@
   </div>
   <textarea id="watext" readonly spellcheck="false"
     style="width:100%; height:480px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:12px; font-family:inherit; font-size:0.9rem; line-height:1.5; resize:vertical;"></textarea>
+</div>
+
+<div class="wrap" id="custompanel" style="display:none; padding:16px;">
+  <div style="font-size:0.9rem; color:var(--muted); margin-bottom:10px; line-height:1.5;">
+    Paste a probability table (one team per row). Each row needs the team name and its cumulative reach-stage probabilities.
+    The parser reads the <b>last five</b> percentages on each line as <b>Reach R16, QF, SF, Final, Champion</b> — so leading columns like
+    "top group" and "L32 (round of 32)" are ignored automatically. Then click <b>Parse &amp; use</b> and switch Source to "Custom".
+  </div>
+  <div style="display:flex; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+    <button id="parseCustom">Parse &amp; use</button>
+    <button id="clearCustom">Clear</button>
+    <span id="customStatus" style="font-size:0.85rem; color:var(--muted);"></span>
+  </div>
+  <textarea id="customInput" spellcheck="false" placeholder="team logoFrance&#10;71.77%	99.87%	75.81%	51.78%	36.86%	24.70%	15.78%&#10;team logoEngland&#10;92.01%	99.81%	74.10%	53.15%	33.82%	21.28%	12.58%&#10;..."
+    style="width:100%; height:420px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:12px; font-family:'IBM Plex Mono', monospace; font-size:0.85rem; line-height:1.5; resize:vertical;"></textarea>
 </div>
 
 <footer>
@@ -220,7 +243,8 @@ const ALIASES = {
   "usa": "USA", "united states": "USA",
   "turkey": "Türkiye", "turkiye": "Türkiye",
   "ivory coast": "Ivory Coast", "cote d'ivoire": "Ivory Coast",
-  "south korea": "South Korea", "korea republic": "South Korea",
+  "south korea": "South Korea", "korea republic": "South Korea", "korea rep": "South Korea",
+  "cabo verde": "Cape Verde", "cape verde": "Cape Verde",
   "czech republic": "Czechia", "czechia": "Czechia",
   "bosnia": "Bosnia and Herzegovina", "bosnia and herzegovina": "Bosnia and Herzegovina",
   "bosnia-herzegovina": "Bosnia and Herzegovina",
@@ -265,6 +289,10 @@ let rawOutRows = [];     // outcome rows, per-row normalized only
 let outRows = [];        // outcome rows in effect (raw or IPF)
 let payRows = [];        // payout view rows
 let useIPF = localStorage.getItem("wc26ipf") !== "0"; // default on
+let source = localStorage.getItem("wc26source") || "polymarket"; // "polymarket" | "custom"
+// customStages: array of 5 maps (teamKey -> prob) in STAGES order [r16,qf,sf,final,win], or null
+let customStages = null;
+try { const c = localStorage.getItem("wc26customText"); if (c) customStages = parseCustom(c); } catch (e) {}
 
 // Iterative proportional fitting: rows sum to 100%, columns to structural totals
 // (1 champion, 1 runner-up, 1 third, 1 fourth, 4 QF losers, 8 R16 losers, rest out earlier)
@@ -348,29 +376,77 @@ function computeOutcomes(row) {
   return { team: row.team, ...o };
 }
 
+// Build rows[] from an array of 5 maps (teamKey -> prob) in STAGES order, then recompute.
+function assembleRows(results) {
+  const teams = new Set();
+  results.forEach(r => Object.keys(r).forEach(t => teams.add(t)));
+  rows = [...teams].map(key => {
+    const row = { team: NAMES[key] || key };
+    STAGES.forEach((s, i) => {
+      const p = results[i][key];
+      row[s.key] = (p != null && p > 0) ? { p, odds: 1 / p } : null;
+    });
+    return row;
+  });
+  const dd = dedupeRows(rows);
+  rows = dd.rows;
+  rawOutRows = rows.map(computeOutcomes);
+  recompute();
+  return dd;
+}
+
+// Parse a pasted probability table -> array of 5 maps [r16,qf,sf,final,win].
+// Reads the LAST FIVE percentages on each data line as R16,QF,SF,Final,Champion
+// (leading columns such as "top group" and "L32" are ignored).
+function parseCustom(text) {
+  const STOP = ["team","bracket","table","top group","l32","l16","qf","sf","final","champ","logo"];
+  const maps = [{}, {}, {}, {}, {}]; // r16, qf, sf, final, win
+  let count = 0;
+  const lines = text.split(/\r?\n/).map(l => l.replace(/team\s*logo/ig, "").trim()).filter(Boolean);
+  let lastName = null;
+  for (const line of lines) {
+    const pcts = [...line.matchAll(/(\d+(?:\.\d+)?)\s*%/g)].map(m => parseFloat(m[1]));
+    if (pcts.length >= 5) {
+      const lead = line.split(/[\d.]/)[0].trim();
+      let name = (lead && /[a-zA-Z]/.test(lead)) ? lead : lastName;
+      if (!name || STOP.includes(name.toLowerCase())) { lastName = null; continue; }
+      const n = pcts.length;
+      const vals = [pcts[n-5], pcts[n-4], pcts[n-3], pcts[n-2], pcts[n-1]].map(v => v / 100);
+      const key = teamKey(name);
+      vals.forEach((v, i) => { maps[i][key] = v; });
+      count++;
+      lastName = null;
+    } else if (/[a-zA-Z]/.test(line)) {
+      lastName = line;
+    }
+  }
+  if (!count) throw new Error("no rows parsed");
+  maps._count = count;
+  return maps;
+}
+
 async function load() {
   const status = document.getElementById("status");
-  status.textContent = "Loading live prices...";
   status.classList.remove("err");
   try {
-    const results = await Promise.all(STAGES.map(fetchStage));
-    const teams = new Set();
-    results.forEach(r => Object.keys(r).forEach(t => teams.add(t)));
-    rows = [...teams].map(key => {
-      const row = { team: NAMES[key] || key };
-      STAGES.forEach((s, i) => {
-        const p = results[i][key];
-        row[s.key] = p != null ? { p, odds: 1 / p } : null;
-      });
-      return row;
-    });
-    const dd = dedupeRows(rows);
-    rows = dd.rows;
-    rawOutRows = rows.map(computeOutcomes);
-    recompute();
-    render();
-    status.textContent = "Live • updated " + new Date().toLocaleTimeString() + " • " + rows.length + " teams" +
-      (dd.collisions ? " • ⚠ merged " + dd.collisions + " duplicate name(s) from source" : "");
+    if (source === "custom") {
+      if (!customStages) {
+        rows = []; rawOutRows = []; recompute(); render();
+        status.textContent = "No custom data yet — paste a table in the 'Custom source' tab.";
+        return;
+      }
+      const dd = assembleRows(customStages);
+      render();
+      status.textContent = "Custom (pasted) • " + rows.length + " teams" +
+        (dd.collisions ? " • ⚠ merged " + dd.collisions + " duplicate(s)" : "");
+    } else {
+      status.textContent = "Loading live prices...";
+      const results = await Promise.all(STAGES.map(fetchStage));
+      const dd = assembleRows(results);
+      render();
+      status.textContent = "Live (Polymarket) • updated " + new Date().toLocaleTimeString() + " • " + rows.length + " teams" +
+        (dd.collisions ? " • ⚠ merged " + dd.collisions + " duplicate name(s) from source" : "");
+    }
   } catch (e) {
     status.textContent = "Failed to load: " + e.message;
     status.classList.add("err");
@@ -458,8 +534,11 @@ function genWA() {
 
 function render() {
   const isWA = view === "wa";
-  document.getElementById("tblwrap").style.display = isWA ? "none" : "";
+  const isCustom = view === "custom";
+  document.getElementById("tblwrap").style.display = (isWA || isCustom) ? "none" : "";
   document.getElementById("wapanel").style.display = isWA ? "" : "none";
+  document.getElementById("custompanel").style.display = isCustom ? "" : "none";
+  if (isCustom) return;
   if (isWA) { document.getElementById("ipf2").checked = useIPF; genWA(); return; }
   renderHead();
   const q = document.getElementById("filter").value.trim().toLowerCase();
@@ -583,6 +662,8 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
     ? "Expected payout per team: each outcome's probability × its payout (1st=200, 2nd=100, 3rd=50, 4th=25, out in QF=10, out in R16=5, out before R16=0). Columns show each outcome's contribution."
     : view === "mm"
     ? "Market-maker sheet. Fair price = expected payout; bid/ask = ±10%. Set 'Won't get past' to cap a team's run — outcome probabilities beyond the cap are zeroed and the rest renormalized, giving alternative EV and quotes. Net position and caps are saved locally in your browser."
+    : view === "custom"
+    ? "Paste your own probability table here (e.g. from Opta) to use as an alternative source. After parsing, switch the Source selector to 'Custom' and every tab recomputes from your numbers."
     : "WhatsApp-ready quote sheet. Pick pricing mode and quote set, then copy-paste into your group chat — *bold* and _italics_ render natively in WhatsApp. The team filter above applies.";
   render();
 }));
@@ -630,6 +711,41 @@ document.getElementById("importData").addEventListener("click", () => {
   } catch (e) {
     document.getElementById("status").textContent = "Import failed: invalid JSON";
   }
+});
+// --- source selector + custom paste ---
+const srcSel = document.getElementById("srcSel");
+srcSel.value = source;
+srcSel.addEventListener("change", () => {
+  source = srcSel.value;
+  try { localStorage.setItem("wc26source", source); } catch (e) {}
+  load();
+});
+// restore previously pasted text
+try { const c = localStorage.getItem("wc26customText"); if (c) document.getElementById("customInput").value = c; } catch (e) {}
+document.getElementById("parseCustom").addEventListener("click", () => {
+  const cs = document.getElementById("customStatus");
+  const text = document.getElementById("customInput").value;
+  try {
+    const parsed = parseCustom(text);
+    customStages = parsed;
+    try { localStorage.setItem("wc26customText", text); } catch (e) {}
+    source = "custom"; srcSel.value = "custom";
+    try { localStorage.setItem("wc26source", source); } catch (e) {}
+    cs.textContent = "Parsed " + parsed._count + " teams ✓ — now using Custom source.";
+    cs.style.color = "var(--accent)";
+    load();
+  } catch (e) {
+    cs.textContent = "Parse failed: " + e.message + " (need team names + ≥5 percentages per row)";
+    cs.style.color = "#f85149";
+  }
+});
+document.getElementById("clearCustom").addEventListener("click", () => {
+  document.getElementById("customInput").value = "";
+  customStages = null;
+  try { localStorage.removeItem("wc26customText"); } catch (e) {}
+  const cs = document.getElementById("customStatus");
+  cs.textContent = "Cleared."; cs.style.color = "var(--muted)";
+  if (source === "custom") { source = "polymarket"; srcSel.value = "polymarket"; try { localStorage.setItem("wc26source", source); } catch (e) {} load(); }
 });
 load();
 </script>
